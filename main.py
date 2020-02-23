@@ -48,8 +48,8 @@ class DataHandler:
             # min dimension supported by efficientnet is 32x32
             transforms_list.append(transforms.Pad(padding=2, padding_mode="edge"))
         if augmentations:
-            transforms_list.append(transforms.RandomCrop(32 if padding_to_32 else 28))
-            # transforms_list.append(transforms.RandomAffine(degrees=10, translate=(.1, .1), scale=(.9, 1.1)))
+            # transforms_list.append(transforms.RandomCrop(32 if padding_to_32 else 28))
+            transforms_list.append(transforms.RandomAffine(degrees=0, translate=(.2, .2), scale=(.9, 1.1)))
             transforms_list.append(transforms.RandomHorizontalFlip())
             # inverse with p=.5
             # transforms_list.append(transforms.Lambda(lambda x: 1 - x if int(time.time()) % 2 == 0 else x))
@@ -200,7 +200,7 @@ class Benchmarker:
 class Trainer:
     """Networks training utils."""
 
-    def __init__(self, lr, n_epochs=10, momentum=0.9, weight_decay=1e-5, out_dir="../fmnist_out", exp_name=""):
+    def __init__(self, lr, n_epochs=10, momentum=0.9, weight_decay=1e-4, out_dir="../fmnist_out", exp_name=""):
         self.lr = lr
         self.momentum = momentum
         self.weight_decay = weight_decay
@@ -362,7 +362,7 @@ class Trainer:
 # #################################################################################################################### #
 def run_experiment():
     # set params
-    n_epochs = 50
+    n_epochs = 16
     lr = 1e-2  # 1e-3
     batch_size = 1000
     exp_name = "RMSPropOptim"
@@ -374,10 +374,11 @@ def run_experiment():
     # model = Trainer.load_model(mp, model)
     padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
     prep = DataHandler.preprocess(augmentations=True, padding_to_32=padding_to_32)
+    prep_valdiation = DataHandler.preprocess(augmentations=False, padding_to_32=padding_to_32)
 
     # data
     train_dataloader = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
-    validation_data = DataHandler.get_validation_data(transform=prep)
+    validation_data = DataHandler.get_validation_data(transform=prep_valdiation)
 
     # train
     trainer = Trainer(lr=lr, n_epochs=n_epochs, exp_name=exp_name)
