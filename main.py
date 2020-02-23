@@ -6,7 +6,7 @@ from collections import OrderedDict, Counter
 import torch
 import torch.cuda
 import torch.nn as nn
-import torch.optim as optim
+from torch import optim as optim
 from torch.utils.data import DataLoader
 
 from torchvision import transforms
@@ -63,18 +63,18 @@ class DataHandler:
         return dataloader
 
     @classmethod
-    def get_validation_data(cls, n_samples=1000, padding_to_32=False) -> (torch.Tensor, torch.Tensor):
-        prep = cls.preprocess(augmentations=False, padding_to_32=padding_to_32)
-        test_data = FashionMNIST(train=False, root=cls.FMNIST_DATA_DIR, transform=prep, download=True)
+    def get_validation_data(cls, n_samples=1000, transform=None) -> (torch.Tensor, torch.Tensor):
+        # prep = cls.preprocess(augmentations=False, padding_to_32=padding_to_32)
+        test_data = FashionMNIST(train=False, root=cls.FMNIST_DATA_DIR, transform=transform, download=True)
         dataloader = DataLoader(test_data, batch_size=n_samples, shuffle=True, num_workers=cls.N_WORKERS)
         validation_input, validation_labels = iter(dataloader).next()
         # print(Counter(validation_labels.numpy()))
         return validation_input.cuda(), validation_labels.cuda()
 
     @classmethod
-    def get_test_dataloader(cls, padding_to_32=False) -> (torch.Tensor, torch.Tensor):
-        prep = cls.preprocess(augmentations=False, padding_to_32=padding_to_32)
-        test_data = FashionMNIST(train=False, root=cls.FMNIST_DATA_DIR, transform=prep, download=True)
+    def get_test_dataloader(cls, transform) -> (torch.Tensor, torch.Tensor):
+        # prep = cls.preprocess(augmentations=False, padding_to_32=padding_to_32)
+        test_data = FashionMNIST(train=False, root=cls.FMNIST_DATA_DIR, transform=transform, download=True)
         test_loader = DataLoader(test_data, batch_size=1000, num_workers=cls.N_WORKERS)
         return test_loader
 
@@ -99,6 +99,7 @@ class Benchmarker:
 
     @classmethod
     def evaluate(cls, model: nn.Module, input_tensor, labels, criterion, description="", verbose=True):
+        model.eval()
         with torch.no_grad():
             predictions = model(input_tensor)
             loss = criterion(predictions, labels)
@@ -113,24 +114,34 @@ class Benchmarker:
     @classmethod
     def evaluate_test_data(cls, model: nn.Module, criterion):
         model.eval()
-        num_correct = 0
-        losses = []
 
         padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
-        test_dataloader = DataHandler.get_test_dataloader(padding_to_32)
-        n = len(test_dataloader.dataset)
+        prep_default = DataHandler.preprocess(augmentations=False, padding_to_32=padding_to_32)
+        prep_augment = DataHandler.preprocess(augmentations=True, padding_to_32=padding_to_32)
+        dataloaders_list = list()
+        dataloaders_list.append(DataHandler.get_test_dataloader(transform=prep_default))
+        dataloaders_list.append(DataHandler.get_test_dataloader(transform=prep_augment))
+
+        n = len(dataloaders_list[0].dataset)
+        acc_list, loss_list = [], []
         with torch.no_grad():
-            for test_input, test_labels in test_dataloader:
-                test_labels = test_labels.cuda()
-                predictions = model(test_input.cuda())
-                loss = criterion(predictions, test_labels)
-                losses.append(loss.detach().item())
-                _, num_correct_in_batch = cls.get_accuracy_statistics(predictions, test_labels)
-                num_correct += num_correct_in_batch
-            test_loss = np.mean(losses)
-            test_acc = num_correct / n
-        print("[{:^17s}] || Loss={:.4f}  Acc={:4.1f}%  n={}".format("TEST EVAL", test_loss, test_acc * 100, n))
-        return test_loss, test_acc
+            for dlid, data_loader in enumerate(dataloaders_list):
+                num_correct = 0
+                losses = []
+                for test_input, test_labels in data_loader:
+                    test_labels = test_labels.cuda()
+                    predictions = model(test_input.cuda())
+                    loss = criterion(predictions, test_labels)
+                    losses.append(loss.detach().item())
+                    _, num_correct_in_batch = cls.get_accuracy_statistics(predictions, test_labels)
+                    num_correct += num_correct_in_batch
+                test_loss = np.mean(losses)
+                test_acc = num_correct / n
+                acc_list.append(test_acc)
+                loss_list.append(test_loss)
+                print("[{:^17s}] || Loss={:.4f}  Acc={:4.2f}%  n={}".
+                      format("TEST EVAL- [{:}]".format(dlid), test_loss, test_acc * 100, n))
+        return min(loss_list), max(acc_list)
 
     @staticmethod
     def run_net_summary(model, input_shape=(1, 28, 28)):
@@ -189,12 +200,13 @@ class Benchmarker:
 class Trainer:
     """Networks training utils."""
 
-    def __init__(self, lr, n_epochs=10, momentum=0.9, weight_decay=0.0001, out_dir="../fmnist_out"):
+    def __init__(self, lr, n_epochs=10, momentum=0.9, weight_decay=1e-5, out_dir="../fmnist_out", exp_name=""):
         self.lr = lr
         self.momentum = momentum
         self.weight_decay = weight_decay
         self.n_epochs = n_epochs
         self.out_dir = out_dir
+        self.exp_name = exp_name
 
     def __get_sgd_optimizer(self, model: nn.Module) -> optim.SGD:
         optimizer = optim.SGD(params=model.parameters(),
@@ -202,6 +214,12 @@ class Trainer:
                               momentum=self.momentum,
                               weight_decay=self.weight_decay)
         return optimizer
+
+    def __get_rmsprop_optimizer(self, model: nn.Module) -> optim.RMSprop:
+        optimizer = optim.RMSprop(params=model.parameters(),
+                                  lr=self.lr,
+                                  momentum=self.momentum,
+                                  weight_decay=self.weight_decay)
 
     @staticmethod
     def __aggregate_epoch_stats(loss_per_batch, n_correct_epoch, n_training_data, time_elapsed):
@@ -212,7 +230,17 @@ class Trainer:
         print("[TRAIN - epoch avg] || Loss={:.4f}  Acc={:4.1f}%  T-{}".format(epoch_loss, epoch_acc * 100, t))
         return epoch_loss, epoch_acc
 
+    def __adjust_learning_rate(self, optimizer, epoch):
+        self.lr = self.lr * ((0.1 ** int(epoch >= 40)) * (0.1 ** int(epoch >= 100)) * (0.1 ** int(epoch >= 1000)))
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = self.lr
+
+    @staticmethod
+    def __get_learning_rate(optimizer):
+        return [param_group['lr'] for param_group in optimizer.param_groups]
+
     def train(self, model: nn.Module, dataloader: DataLoader, validation_data=None, verbose_batch=True):
+        # optimizer = self.__get_sgd_optimizer(model)
         optimizer = self.__get_sgd_optimizer(model)
         criterion = nn.CrossEntropyLoss()
         name = model.__class__.__name__
@@ -224,8 +252,9 @@ class Trainer:
         # for each epoch
         print("\n\n[Net Training] - {}".format(name))
         for eid in range(self.n_epochs):
+            # self.__adjust_learning_rate(optimizer, eid)
             print("\n\n{}".format("=" * 50))
-            print("EPOCH {:3d}".format(eid))
+            print("EPOCH {:3d} | LR={:}".format(eid, self.__get_learning_rate(optimizer)))
             loss_per_batch = []
             acc_per_batch = []
             n_correct_in_epoch = 0
@@ -265,6 +294,7 @@ class Trainer:
             if not validation_data:
                 continue
             val_loss, val_acc = Benchmarker.evaluate(model, *validation_data, criterion, description="validation")
+            model.train()
             validation_loss.append(val_loss)
             validation_acc.append(val_acc)
 
@@ -290,6 +320,7 @@ class Trainer:
         # loss
         axs[0].plot(x, train_loss, color=colors[0], alpha=.8, marker="o", label="train")
         axs[0].plot(x, validation_loss, color=colors[1], alpha=.8,  marker="s", label="validation")
+        axs[0].grid(True)
         axs[0].legend()
         axs[0].set_title("Loss")
 
@@ -297,6 +328,7 @@ class Trainer:
         axs[1].plot(x, train_acc, color=colors[0], alpha=.8, marker="o", label="train")
         axs[1].plot(x, validation_acc, color=colors[1], alpha=.8, marker="s", label="validation")
         axs[1].plot(x, [.95] * n_epochs, color="tab:gray", alpha=.7, ls="--")
+        axs[1].grid(True)
         axs[1].legend()
         axs[1].set_title("Accuracy")
         axs[1].set_xlabel("#epoch")
@@ -312,8 +344,9 @@ class Trainer:
         name = model.__class__.__name__
         n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         n_params = params_format(n_params)
-        model_path = os.path.join(self.out_dir, "model-{:}_{:}_epochs-{:03d}_acc-{:5.3f}_params-{:}_t-{:05.1f}.pth".
-                                  format(name, time_stamp, self.n_epochs, test_acc, n_params, inf_time))
+        model_path = os.path.join(self.out_dir,
+                                  "model-{:}_{:}_epochs-{:03d}_acc-{:5.3f}_params-{:}_t-{:05.1f}_exp-{:}.pth".
+                                  format(name, time_stamp, self.n_epochs, test_acc, n_params, inf_time, self.exp_name))
         print("\nSaving model to {} ..".format(model_path))
         torch.save(model.state_dict(), model_path)
 
@@ -329,29 +362,34 @@ class Trainer:
 # #################################################################################################################### #
 def run_experiment():
     # set params
-    n_epochs = 16
+    n_epochs = 50
     lr = 1e-2  # 1e-3
     batch_size = 1000
+    exp_name = "RMSPropOptim"
 
     # get model
     # model = Net3Conv().cuda()
     model = get_efficientnet_pretrained_on_imagenet()
-    # model = Trainer.load_model("/home/cortica/Documents/my/git_personal/fmnist_out/model-EfficientNet_Feb22_2121_epochs-016_acc-0.892_params-4020K_t-272.8.pth", model)
+    # mp = "/home/cortica/Documents/my/git_personal/fmnist_out/model-EfficientNet_Feb23_0114_epochs-050_acc-0.915_params-4020K_t-299.8.pth"
+    # model = Trainer.load_model(mp, model)
     padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
     prep = DataHandler.preprocess(augmentations=True, padding_to_32=padding_to_32)
 
     # data
     train_dataloader = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
-    validation_data = DataHandler.get_validation_data(padding_to_32=padding_to_32)
+    validation_data = DataHandler.get_validation_data(transform=prep)
 
     # train
-    trainer = Trainer(lr=lr, n_epochs=n_epochs)
+    trainer = Trainer(lr=lr, n_epochs=n_epochs, exp_name=exp_name)
     trainer.train(model, train_dataloader, validation_data, verbose_batch=True)
 
     # TODO TESTING - REMOVE
     # mp = "/home/cortica/Documents/my/git_personal/fmnist_out/model_Net3Conv_Feb22_0014_epochs_50_acc_0.907.pth"
     # m = Trainer.load_model(mp, model_)
     # Benchmarker.run_full_benchmark(m, True)
+
+    # eval model
+    # Benchmarker.run_full_benchmark(model, verbose=True)
 
 
 if __name__ == '__main__':
