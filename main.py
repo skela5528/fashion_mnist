@@ -206,6 +206,7 @@ class Trainer:
         self.n_epochs = n_epochs
         self.out_dir = out_dir
         self.exp_name = exp_name
+        self.best_model_val_acc = 0
 
     def __get_sgd_optimizer(self, model: nn.Module) -> optim.SGD:
         optimizer = optim.SGD(params=model.parameters(),
@@ -220,13 +221,13 @@ class Trainer:
                                   momentum=self.momentum,
                                   weight_decay=self.weight_decay)
 
-    @staticmethod
-    def __aggregate_epoch_stats(loss_per_batch, n_correct_epoch, n_training_data, time_elapsed):
+    def __aggregate_epoch_stats(self, loss_per_batch, n_correct_epoch, n_training_data, time_elapsed):
         epoch_loss = np.mean(loss_per_batch)
         epoch_acc = float(n_correct_epoch) / n_training_data
         t = time_format(time_elapsed)
         print("\n{}".format("-" * 50))
-        print("[TRAIN - epoch avg] || Loss={:.4f}  Acc={:4.1f}%  T-{}".format(epoch_loss, epoch_acc * 100, t))
+        print("[TRAIN - epoch avg] || Loss={:.4f}  Acc={:4.1f}%  T-{}| Best val_acc={:4.1f}%".
+              format(epoch_loss, epoch_acc * 100, t, self.best_model_val_acc * 100))
         return epoch_loss, epoch_acc
 
     def __adjust_learning_rate(self, optimizer, epoch):
@@ -238,6 +239,11 @@ class Trainer:
     @staticmethod
     def __get_learning_rate(optimizer):
         return [param_group['lr'] for param_group in optimizer.param_groups]
+
+    def _update_best_model(self, model, val_acc):
+        if val_acc > self.best_model_val_acc:
+            self.best_model_val_acc = val_acc
+            self.save_model(model, time_stamp="BEST", test_acc=val_acc)
 
     def train(self, model: nn.Module, dataloader: DataLoader, validation_data=None, verbose_batch=True):
         # optimizer = self.__get_sgd_optimizer(model)
@@ -295,6 +301,8 @@ class Trainer:
             if not validation_data:
                 continue
             val_loss, val_acc = Benchmarker.evaluate(model, *validation_data, criterion, description="validation")
+            self._update_best_model(model, val_acc)
+
             model.train()
             validation_loss.append(val_loss)
             validation_acc.append(val_acc)
@@ -327,8 +335,8 @@ class Trainer:
         axs[0].set_title("Loss")
 
         # acc
-        axs[1].plot(x, train_acc, color=colors[0], alpha=.8, marker="o", label="train")
-        axs[1].plot(x, validation_acc, color=colors[1], alpha=.8, marker="s", label="validation")
+        axs[1].plot(x, train_acc, color=colors[0], alpha=.8, marker="o", label="train", lw=1, ms=2)
+        axs[1].plot(x, validation_acc, color=colors[1], alpha=.8, marker="s", label="validation", lw=1, ms=2)
         axs[1].plot(x, [.95] * n_epochs, color="tab:gray", alpha=.7, ls="--", lw=1)
         axs[1].plot(x, [.90] * n_epochs, color="tab:gray", alpha=.5, ls="--", lw=1)
         axs[1].grid(True)
@@ -380,7 +388,7 @@ def run_experiment():
 
     # data
     train_dataloader = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
-    validation_data = DataHandler.get_validation_data(transform=prep)
+    validation_data = DataHandler.get_validation_data(transform=prep, n_samples=3000)
 
     # train
     trainer = Trainer(lr=lr, n_epochs=n_epochs, exp_name=exp_name)
