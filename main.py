@@ -243,7 +243,7 @@ class Trainer:
     def _update_best_model(self, model, val_acc):
         if val_acc > self.best_model_val_acc:
             self.best_model_val_acc = val_acc
-            self.save_model(model, time_stamp="BEST", test_acc=val_acc)
+            self.save_model(model, time_stamp="BEST", test_acc=0)
 
     def train(self, model: nn.Module, dataloader: DataLoader, validation_data=None, verbose_batch=True):
         # optimizer = self.__get_sgd_optimizer(model)
