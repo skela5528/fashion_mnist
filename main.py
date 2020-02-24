@@ -20,8 +20,6 @@ from networks import Net3Conv, get_efficientnet_pretrained_on_imagenet
 # https://nanonets.com/blog/how-to-classify-fashion-images-easily-using-convnets/
 # https://github.com/bndr/pipreqs
 
-MODEL_ID_TO_CLASS = {0: Net3Conv()}
-
 
 def time_format(time_in_seconds):
     return time.strftime("%M:%S", time.gmtime(time_in_seconds))
@@ -48,7 +46,7 @@ class DataHandler:
             transforms_list.append(transforms.Pad(padding=2, padding_mode="edge"))
         if augmentations:
             # transforms_list.append(transforms.RandomCrop(32 if padding_to_32 else 28))
-            transforms_list.append(transforms.RandomAffine(degrees=0, translate=(.2, .2), scale=(.90, 1.10)))
+            transforms_list.append(transforms.RandomAffine(degrees=0, translate=(.15, .15), scale=(.90, 1.10)))
             transforms_list.append(transforms.RandomHorizontalFlip())
             # inverse with p=.5
             # transforms_list.append(transforms.Lambda(lambda x: 1 - x if int(time.time()) % 2 == 0 else x))
@@ -199,11 +197,12 @@ class Benchmarker:
 class Trainer:
     """Networks training utils."""
 
-    def __init__(self, lr, n_epochs=10, momentum=0.9, weight_decay=1e-5, out_dir="../fmnist_out", exp_name=""):
+    def __init__(self, lr, n_epochs=10, momentum=0.9, weight_decay=1e-5, lr_step=60, out_dir="../fmnist_out", exp_name=""):
         self.lr = lr
         self.momentum = momentum
         self.weight_decay = weight_decay
         self.n_epochs = n_epochs
+        self.lr_step = lr_step
         self.out_dir = out_dir
         self.exp_name = exp_name
         self.best_model_val_acc = 0
@@ -230,8 +229,8 @@ class Trainer:
               format(epoch_loss, epoch_acc * 100, t, self.best_model_val_acc * 100))
         return epoch_loss, epoch_acc
 
-    def __adjust_learning_rate(self, optimizer, epoch):
-        if (epoch + 1) % 60 == 0:
+    def __adjust_learning_rate(self, optimizer, epoch, step=60):
+        if (epoch + 1) % step == 0:
             self.lr = self.lr * .2
             for param_group in optimizer.param_groups:
                 param_group['lr'] = self.lr
@@ -327,16 +326,16 @@ class Trainer:
         fig, axs = plt.subplots(nrows=2, ncols=1, sharex=True)
 
         # loss
-        axs[0].plot(x, train_loss, color=colors[0], alpha=.8, marker="o", label="train")
-        axs[0].plot(x, validation_loss, color=colors[1], alpha=.8, marker="s", label="validation")
+        axs[0].plot(x, train_loss, color=colors[0], alpha=.8, marker="o", label="train", ms=3)
+        axs[0].plot(x, validation_loss, color=colors[1], alpha=.8, marker="s", label="validation", ms=3)
         axs[0].set_ylim([0, 2.5])
         axs[0].grid(True)
         axs[0].legend()
         axs[0].set_title("Loss")
 
         # acc
-        axs[1].plot(x, train_acc, color=colors[0], alpha=.8, marker="o", label="train", lw=1, ms=2)
-        axs[1].plot(x, validation_acc, color=colors[1], alpha=.8, marker="s", label="validation", lw=1, ms=2)
+        axs[1].plot(x, train_acc, color=colors[0], alpha=.8, marker="o", label="train", lw=1, ms=3)
+        axs[1].plot(x, validation_acc, color=colors[1], alpha=.8, marker="s", label="validation", lw=1, ms=3)
         axs[1].plot(x, [.95] * n_epochs, color="tab:gray", alpha=.7, ls="--", lw=1)
         axs[1].plot(x, [.90] * n_epochs, color="tab:gray", alpha=.5, ls="--", lw=1)
         axs[1].grid(True)
@@ -403,6 +402,27 @@ def run_experiment():
     # Benchmarker.run_full_benchmark(model, verbose=True)
 
 
+def run_experiment_3conv(augmentations=True):
+    # set params
+    n_epochs = 50
+    lr_step = 40
+    lr = 1e-1  # 1e-3 1e-2 * 3
+    batch_size = 1000
+    exp_name = "Conv3_LR{:7.5f}_aug-{}".format(lr, augmentations)
+
+    # get model
+    model = Net3Conv().cuda()
+    prep = DataHandler.preprocess(augmentations=augmentations, padding_to_32=False)
+
+    # data
+    train_dataloader = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
+    validation_data = DataHandler.get_validation_data(transform=prep, n_samples=1000)
+
+    # train
+    trainer = Trainer(lr=lr, n_epochs=n_epochs, exp_name=exp_name, lr_step=lr_step)
+    trainer.train(model, train_dataloader, validation_data, verbose_batch=True)
+
+
 if __name__ == '__main__':
-    run_experiment()
+    run_experiment_3conv()
     print("\n Done ..")
