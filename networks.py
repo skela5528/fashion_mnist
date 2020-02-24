@@ -67,6 +67,6 @@ class Net3Conv(nn.Module):
 
 def get_efficientnet_pretrained_on_imagenet(model_name="efficientnet-b0", num_classes=10, in_channels=1):
     """For more details: https://github.com/lukemelas/EfficientNet-PyTorch/"""
-    model = EfficientNet.from_pretrained("efficientnet-b0", num_classes=10, in_channels=1)
+    model = EfficientNet.from_pretrained("c", num_classes=10, in_channels=1)
     # model.set_swish(memory_efficient=False)
     return model.cuda()

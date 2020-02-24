@@ -16,7 +16,6 @@ from efficientnet_pytorch import EfficientNet
 
 from networks import Net3Conv, get_efficientnet_pretrained_on_imagenet
 
-
 # TODO CHECK
 # https://nanonets.com/blog/how-to-classify-fashion-images-easily-using-convnets/
 # https://github.com/bndr/pipreqs
@@ -49,7 +48,7 @@ class DataHandler:
             transforms_list.append(transforms.Pad(padding=2, padding_mode="edge"))
         if augmentations:
             # transforms_list.append(transforms.RandomCrop(32 if padding_to_32 else 28))
-            transforms_list.append(transforms.RandomAffine(degrees=0, translate=(.2, .2), scale=(.9, 1.1)))
+            transforms_list.append(transforms.RandomAffine(degrees=0, translate=(.2, .2), scale=(.90, 1.10)))
             transforms_list.append(transforms.RandomHorizontalFlip())
             # inverse with p=.5
             # transforms_list.append(transforms.Lambda(lambda x: 1 - x if int(time.time()) % 2 == 0 else x))
@@ -200,7 +199,7 @@ class Benchmarker:
 class Trainer:
     """Networks training utils."""
 
-    def __init__(self, lr, n_epochs=10, momentum=0.9, weight_decay=1e-4, out_dir="../fmnist_out", exp_name=""):
+    def __init__(self, lr, n_epochs=10, momentum=0.9, weight_decay=1e-5, out_dir="../fmnist_out", exp_name=""):
         self.lr = lr
         self.momentum = momentum
         self.weight_decay = weight_decay
@@ -231,9 +230,10 @@ class Trainer:
         return epoch_loss, epoch_acc
 
     def __adjust_learning_rate(self, optimizer, epoch):
-        self.lr = self.lr * ((0.1 ** int(epoch >= 40)) * (0.1 ** int(epoch >= 100)) * (0.1 ** int(epoch >= 1000)))
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = self.lr
+        if (epoch + 1) % 60 == 0:
+            self.lr = self.lr * .2
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = self.lr
 
     @staticmethod
     def __get_learning_rate(optimizer):
@@ -248,11 +248,12 @@ class Trainer:
         train_acc, validation_acc = [], []
         time_start = time.time()
         time_elapsed = 0
+        model.train()
 
         # for each epoch
         print("\n\n[Net Training] - {}".format(name))
         for eid in range(self.n_epochs):
-            # self.__adjust_learning_rate(optimizer, eid)
+            self.__adjust_learning_rate(optimizer, eid)
             print("\n\n{}".format("=" * 50))
             print("EPOCH {:3d} | LR={:}".format(eid, self.__get_learning_rate(optimizer)))
             loss_per_batch = []
@@ -280,7 +281,7 @@ class Trainer:
                 acc_per_batch.append(acc)
                 n_correct_in_epoch += n_correct
                 time_elapsed = time.time() - time_start
-                if verbose_batch:
+                if verbose_batch and bid % 10 == 0:
                     print(" * batch -{:3d} || Loss={:.4f}  TrainAcc={:4.1f}%  T-{:s}".
                           format(bid, loss_per_batch[-1], acc * 100, time_format(time_elapsed)))
 
@@ -303,7 +304,7 @@ class Trainer:
         model.eval()
         del validation_data, inputs, labels
         torch.cuda.empty_cache()
-        
+
         bench_results = Benchmarker.run_full_benchmark(model)
         self.plot_learning_stats(train_loss, validation_loss, train_acc, validation_acc, time_stamp, name)
         self.save_model(model, time_stamp, bench_results["test_acc"], bench_results["inference_time_mean"])
@@ -314,12 +315,13 @@ class Trainer:
         os.makedirs(self.out_dir, exist_ok=True)
         n_epochs = len(train_loss)
         assert len(train_loss) == len(validation_loss) == len(train_acc) == len(validation_acc)
-        x = range(1, n_epochs+1, 1)
+        x = range(1, n_epochs + 1, 1)
         fig, axs = plt.subplots(nrows=2, ncols=1, sharex=True)
 
         # loss
         axs[0].plot(x, train_loss, color=colors[0], alpha=.8, marker="o", label="train")
-        axs[0].plot(x, validation_loss, color=colors[1], alpha=.8,  marker="s", label="validation")
+        axs[0].plot(x, validation_loss, color=colors[1], alpha=.8, marker="s", label="validation")
+        axs[0].set_ylim([0, 2.5])
         axs[0].grid(True)
         axs[0].legend()
         axs[0].set_title("Loss")
@@ -327,7 +329,8 @@ class Trainer:
         # acc
         axs[1].plot(x, train_acc, color=colors[0], alpha=.8, marker="o", label="train")
         axs[1].plot(x, validation_acc, color=colors[1], alpha=.8, marker="s", label="validation")
-        axs[1].plot(x, [.95] * n_epochs, color="tab:gray", alpha=.7, ls="--")
+        axs[1].plot(x, [.95] * n_epochs, color="tab:gray", alpha=.7, ls="--", lw=1)
+        axs[1].plot(x, [.90] * n_epochs, color="tab:gray", alpha=.5, ls="--", lw=1)
         axs[1].grid(True)
         axs[1].legend()
         axs[1].set_title("Accuracy")
@@ -362,23 +365,22 @@ class Trainer:
 # #################################################################################################################### #
 def run_experiment():
     # set params
-    n_epochs = 16
-    lr = 1e-2  # 1e-3
+    n_epochs = 100
+    lr = 1e-1 * 2  # 1e-3 1e-2 * 3
     batch_size = 1000
-    exp_name = "RMSPropOptim"
+    exp_name = "b2_dropout_04_05_Aug0201"
 
     # get model
     # model = Net3Conv().cuda()
     model = get_efficientnet_pretrained_on_imagenet()
-    # mp = "/home/cortica/Documents/my/git_personal/fmnist_out/model-EfficientNet_Feb23_0114_epochs-050_acc-0.915_params-4020K_t-299.8.pth"
+    # mp = "/content/gdrive/My Drive/git/fmnist_out/model-EfficientNet_Feb23_1523_epochs-050_acc-0.925_params-4020K_t-089.3_exp-RMSPropOptim_LR01_AdjsutLR40.pth"
     # model = Trainer.load_model(mp, model)
     padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
     prep = DataHandler.preprocess(augmentations=True, padding_to_32=padding_to_32)
-    prep_valdiation = DataHandler.preprocess(augmentations=False, padding_to_32=padding_to_32)
 
     # data
     train_dataloader = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
-    validation_data = DataHandler.get_validation_data(transform=prep_valdiation)
+    validation_data = DataHandler.get_validation_data(transform=prep)
 
     # train
     trainer = Trainer(lr=lr, n_epochs=n_epochs, exp_name=exp_name)
