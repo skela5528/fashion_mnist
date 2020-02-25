@@ -1,4 +1,4 @@
-___There are some experiments with Pytorch and  Fashion-MNIST data set.___
+__There are some experiments with Pytorch and  Fashion-MNIST data set.__
 
-___All details are in [Report.ipynb](Report.ipynb)___
+__All details are in [Report.ipynb](Report.ipynb)__
 
