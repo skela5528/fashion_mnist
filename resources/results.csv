@@ -1,0 +1,7 @@
+Model	Test Accuracy	#params	Inference time [ms/1k f-mnist images]	time std	Augmentations
+Net3Conv	0.907	28890	11.7	.1	no
+Net3Conv	0.909	28890	11.7	.1	yes
+Net9Conv	0.934	154026	48.0	1.0	no
+Net9Conv	0.942	154026	48.0	1.0	yes
+EfficientNet-b0	0.927	4019782	238.3	3.8	no
+EfficientNet-b0	0.935	4019782	238.3	3.8	yes

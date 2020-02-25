@@ -14,11 +14,7 @@ from torchvision.datasets import FashionMNIST
 from torchsummary import summary
 from efficientnet_pytorch import EfficientNet
 
-from networks import Net3Conv, get_efficientnet_pretrained_on_imagenet
-
-# TODO CHECK
-# https://nanonets.com/blog/how-to-classify-fashion-images-easily-using-convnets/
-# https://github.com/bndr/pipreqs
+from networks import Net3Conv, Net9Conv, get_efficientnet_pretrained_on_imagenet
 
 
 def time_format(time_in_seconds):
@@ -258,7 +254,7 @@ class Trainer:
         # for each epoch
         print("\n\n[Net Training] - {}".format(name))
         for eid in range(self.n_epochs):
-            self.__adjust_learning_rate(optimizer, eid)
+            self.__adjust_learning_rate(optimizer, eid, self.lr_step)
             print("\n\n{}".format("=" * 50))
             print("EPOCH {:3d} | LR={:}".format(eid, self.__get_learning_rate(optimizer)))
             loss_per_batch = []
@@ -370,20 +366,17 @@ class Trainer:
 
 
 # #################################################################################################################### #
-def run_experiment():
+def run_experiment_efficientnet(augmentations=False):
     # set params
     n_epochs = 100
     lr = 1e-1 * 2  # 1e-3 1e-2 * 3
     batch_size = 1000
-    exp_name = "b2_dropout_04_05_Aug0201"
+    exp_name = "b0_dropout_04_05_Aug0201"
 
     # get model
-    # model = Net3Conv().cuda()
     model = get_efficientnet_pretrained_on_imagenet()
-    # mp = "/content/gdrive/My Drive/git/fmnist_out/model-EfficientNet_Feb23_1523_epochs-050_acc-0.925_params-4020K_t-089.3_exp-RMSPropOptim_LR01_AdjsutLR40.pth"
-    # model = Trainer.load_model(mp, model)
     padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
-    prep = DataHandler.preprocess(augmentations=True, padding_to_32=padding_to_32)
+    prep = DataHandler.preprocess(augmentations=augmentations, padding_to_32=padding_to_32)
 
     # data
     train_dataloader = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
@@ -392,14 +385,6 @@ def run_experiment():
     # train
     trainer = Trainer(lr=lr, n_epochs=n_epochs, exp_name=exp_name)
     trainer.train(model, train_dataloader, validation_data, verbose_batch=True)
-
-    # TODO TESTING - REMOVE
-    # mp = "/home/cortica/Documents/my/git_personal/fmnist_out/model_Net3Conv_Feb22_0014_epochs_50_acc_0.907.pth"
-    # m = Trainer.load_model(mp, model_)
-    # Benchmarker.run_full_benchmark(m, True)
-
-    # eval model
-    # Benchmarker.run_full_benchmark(model, verbose=True)
 
 
 def run_experiment_3conv(augmentations=True):
@@ -423,6 +408,22 @@ def run_experiment_3conv(augmentations=True):
     trainer.train(model, train_dataloader, validation_data, verbose_batch=True)
 
 
+def measure_inference_time():
+    models = [Net3Conv(),
+              Net9Conv(),
+              get_efficientnet_pretrained_on_imagenet()]
+    models_paths = ["resources/model-Net3Conv_Feb24_1832_epochs-050_acc-0.907_params-0029K_t-007.6_exp-Conv9_LR0.10000_aug-False.pth",
+                    "resources/model-Net9Conv_Feb24_1902_epochs-050_acc-0.934_params-0154K_t-034.2_exp-Conv9_LR0.10000_aug-False.pth",
+                    "resources/model-EfficientNet_Feb23_1701_epochs-050_acc-0.935_params-4020K_t-093.0_exp-LR01_AdjsutLR40_dropout_025_05_augment005.pth"]
+    for i in range(3):
+        for model, model_p in zip(models, models_paths):
+            net = Trainer.load_model(model_p, model)
+            Benchmarker.get_inference_time(net.cuda())
+
+
 if __name__ == '__main__':
-    run_experiment_3conv()
+    # run_experiment_3conv()
+    # run_experiment_efficientnet()
+    measure_inference_time()
+
     print("\n Done ..")

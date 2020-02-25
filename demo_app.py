@@ -10,16 +10,25 @@ from torchvision import transforms
 from PIL import Image, ImageDraw, ImageFont
 import copy
 
-from networks import Net3Conv
+from networks import Net3Conv, Net9Conv
 from efficientnet_pytorch import EfficientNet
 
 CONFIG = dict()
-CONFIG["model_path"] = "resources/model-EfficientNet_Feb23_1701_epochs-050_acc-0.935_params-4020K_t-093.0_exp-LR01_AdjsutLR40_dropout_025_05_augment005.pth"
-CONFIG["model_name"] = "EfficientNet_b0"
-CONFIG["images_dir"] = "/home/cortica/Documents/my/git_personal/data/DemoImages/images_1k"
-CONFIG["model_input_size"] = 32
+CONFIG["model_path"] = \
+    "resources/model-Net9Conv_Feb24_1952_epochs-050_acc-0.942_params-0154K_t-053.3_exp-Conv9_LR0.10000_aug-True.pth"
+CONFIG["model_name"] = "Net9Conv"  # "EfficientNet_b0"
+CONFIG["images_dir"] = "images_16/"
+CONFIG["model_input_size"] = 28  # 32 for EfficientNet_b0
 CONFIG["out_dir"] = "../"
-CONFIG["classes"] = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal', 'Shirt', 'Sneaker', 'Bag',
+CONFIG["classes"] = ['T-shirt/top',
+                     'Trouser',
+                     'Pullover',
+                     'Dress',
+                     'Coat',
+                     'Sandal',
+                     'Shirt',
+                     'Sneaker',
+                     'Bag',
                      'Ankle boot']
 CONFIG["num_classes"] = 10
 CONFIG["in_channels"] = 1
@@ -42,6 +51,8 @@ def plot_tensor_image(batch_imgs: torch.Tensor, labels=None):
 
 
 class IO:
+    """Video related functions."""
+
     FONT = ImageFont.truetype("resources/UbuntuMono-R.ttf", 18)
 
     def __init__(self, out_dir, video_size, fps):
@@ -63,22 +74,11 @@ class IO:
         video_writer.write(arr)
 
     @staticmethod
-    def draw_line(draw: ImageDraw, points: list, color, width, ellipse_radius=None, min_width=6):
-        draw.line(points, fill=color, width=width)
-        if ellipse_radius is None and width >= min_width:
-            ellipse_radius = int(width / 2)
-        # ellipse to avoid line join gaps
-        if ellipse_radius:
-            r = ellipse_radius
-            ellipses = [(x-r, y-r, x+r, y+r) for x, y in points]
-            for ell in ellipses:
-                draw.ellipse(ell, fill=color)
-
-    @staticmethod
-    def draw_prediction_info(draw: ImageDraw, label, score):
+    def draw_prediction_info(draw: ImageDraw, label, score, model_name):
         text = "{:12s} - {:4.2f}".format(label, score)
         draw.text(xy=(10, 10), text=text, fill="lime", font=IO.FONT)
         draw.text(xy=(10, 30), text="Model input", fill="lime", font=IO.FONT)
+        draw.text(xy=(10, 50), text="Model - {}".format(model_name), fill="lime", font=IO.FONT)
 
     @staticmethod
     def draw_model_input(image, model_input: np.array):
@@ -97,7 +97,7 @@ class ImgsDirDataset(Dataset):
         self.size = model_input_size
         self.demo_img_size = demo_img_size
         self.image_path = self.__get_image_paths()
-        self.preprocess = self.__init_preprocess()
+        self.preprocess = self.__init_network_preprocess()
         self.demo_resize = self.__init_demo_preprocess()
 
     def __get_image_paths(self, img_ext=("png", "jpeg", "jpg")):
@@ -111,7 +111,7 @@ class ImgsDirDataset(Dataset):
         print(" - {} images found... ".format(len(image_names)))
         return image_paths
 
-    def __init_preprocess(self):
+    def __init_network_preprocess(self):
         """Preprocess pipeline."""
         transforms_list = list()
         transforms_list.append(transforms.Resize(self.size, interpolation=Image.BICUBIC))
@@ -142,13 +142,14 @@ class ImgsDirDataset(Dataset):
 
 
 class DemoApp:
-    supported_model_names = ["EfficientNet_b0", "Net3Conv"]
+    supported_model_names = ["EfficientNet_b0", "Net3Conv", "Net9Conv"]
 
     def __init__(self, config):
         self.config = copy.deepcopy(config)
 
     def __get_dataloader(self):
-        dataset = ImgsDirDataset(self.config["images_dir"], self.config["model_input_size"], self.config["demo_size"])
+        args = [self.config["images_dir"], self.config["model_input_size"], self.config["demo_size"]]
+        dataset = ImgsDirDataset(*args)
         dataloader = DataLoader(dataset, batch_size=self.config["batch_size"])
         return dataloader
 
@@ -157,6 +158,8 @@ class DemoApp:
         model_instance = None
         if model_name == "Net3Conv":
             model_instance = Net3Conv()
+        elif model_name == "Net9Conv":
+            model_instance = Net9Conv()
         elif model_name == "EfficientNet_b0":
             model_instance = EfficientNet.from_pretrained(model_name="efficientnet-b0",
                                                           num_classes=self.config["num_classes"],
@@ -164,19 +167,20 @@ class DemoApp:
         return model_instance.cuda()
 
     def __load_model(self) -> nn.Module:
-        assert os.path.exists(self.config["model_path"]), "Model doesn't exist - {}!!".format(self.config["model_path"])
+        assert os.path.exists(self.config["model_path"]), \
+            "Model doesn't exist - {}!!".format(self.config["model_path"])
         model_instance = self.__init_model_instance(self.config["model_name"])
         model_dict = torch.load(self.config["model_path"])
         model_instance.load_state_dict(model_dict)
         model_instance.eval()
-        print(" - {} model is loaded from {}".format(model_instance.__class__.__name__, self.config["model_path"]))
+        print(" - {} model is loaded from {}".
+              format(model_instance.__class__.__name__, self.config["model_path"]))
         return model_instance
 
     def __get_predictions_from_logit_scores(self, pred_logit_scores):
         probs = nn.functional.softmax(pred_logit_scores, dim=1)
         probs = probs.detach().cpu().numpy().tolist()
         probs_max = [round(max(p), 5) for p in probs]
-
         predicted_classes = pred_logit_scores.argmax(dim=1)
         predicted_classes = predicted_classes.detach().cpu()
         predicted_labels = [self.config["classes"][cl] for cl in predicted_classes]
@@ -191,7 +195,7 @@ class DemoApp:
         video_writer = io.get_cv2_video_writer()
         n_batches = len(data)
         for bid, (batch_imgs, imgs) in enumerate(data):
-            print("- Processing batch {:4d} out of {:4d} [{:2.0f}%]".format(bid, n_batches, bid/n_batches*100))
+            print(" - Processing batch {:4d} out of {:4d} [{:2.0f}%]".format(bid, n_batches, bid/n_batches*100))
             pred_probs = model(batch_imgs.cuda())
             pred_classes = self.__get_predictions_from_logit_scores(pred_probs)
             # plot_tensor_image(batch_imgs, pred_classes)
@@ -201,8 +205,9 @@ class DemoApp:
                 img_i = Image.fromarray(img_i)
                 io.draw_model_input(img_i, *batch_imgs[i])
                 draw_i = ImageDraw.Draw(img_i)
-                io.draw_prediction_info(draw_i, *pred_classes[i])
+                io.draw_prediction_info(draw_i, *pred_classes[i], self.config["model_name"])
                 io.cv2_video_append_frame(video_writer, img_i)
+        print(" - Done!!! Video saved here: {}".format(io.video_path))
 
 
 if __name__ == '__main__':
