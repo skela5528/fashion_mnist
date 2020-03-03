@@ -1,5 +1,6 @@
 import torch.nn as nn
 from efficientnet_pytorch import EfficientNet
+from torchvision.models.resnet import resnet18
 
 
 class ConvBlock(nn.Module):
@@ -98,6 +99,12 @@ class Net9Conv(nn.Module):
 
 def get_efficientnet_pretrained_on_imagenet(model_name="efficientnet-b0", num_classes=10, in_channels=1):
     """For more details: https://github.com/lukemelas/EfficientNet-PyTorch/"""
-    model = EfficientNet.from_pretrained(model_name, num_classes=10, in_channels=1)
+    model = EfficientNet.from_pretrained(model_name, num_classes=num_classes, in_channels=in_channels)
     # model.set_swish(memory_efficient=False)
+    return model.cuda()
+
+
+def get_resnet18(num_classes=10, in_channels=1):
+    model = resnet18(pretrained=False, num_classes=num_classes)
+    model.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
     return model.cuda()
