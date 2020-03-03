@@ -2,7 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-from collections import OrderedDict, Counter
+from collections import OrderedDict
 import torch
 import torch.cuda
 import torch.nn as nn
@@ -12,9 +12,8 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import FashionMNIST
 from torchsummary import summary
-from efficientnet_pytorch import EfficientNet
 
-from networks import Net3Conv, Net9Conv, get_efficientnet_pretrained_on_imagenet
+from networks import Net3Conv, Net9Conv, get_efficientnet_pretrained_on_imagenet, get_resnet18
 
 
 def time_format(time_in_seconds):
@@ -366,64 +365,48 @@ class Trainer:
 
 
 # #################################################################################################################### #
-def run_experiment_efficientnet(augmentations=False):
-    # set params
-    n_epochs = 100
-    lr = 1e-1 * 2  # 1e-3 1e-2 * 3
-    batch_size = 1000
-    exp_name = "b0_dropout_04_05_Aug0201"
 
+def get_model(model_name):
+    model = None
+    if model_name =="Net3Conv":
+        model = Net3Conv()
+    elif model_name == "Net9Conv":
+        model = Net9Conv()
+    elif model_name == "EfficientNet":
+        model = get_efficientnet_pretrained_on_imagenet()
+    elif model_name == "resnet-18":
+        model = get_resnet18()
+    else:
+        print("Model - {} is not supported! Exit!".format(model_name))
+        exit(-1)
+    return model.cuda()
+
+
+def run_training(train_config):
     # get model
-    model = get_efficientnet_pretrained_on_imagenet()
+    model = get_model(train_config["model_name"])
     padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
-    prep = DataHandler.preprocess(augmentations=augmentations, padding_to_32=padding_to_32)
+    prep = DataHandler.preprocess(augmentations=train_config["augmentations"], padding_to_32=padding_to_32)
+
+    print(model)
+    summary(model, (1, 28, 28))
 
     # data
-    train_dataloader = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
+    train_dataloader = DataHandler.get_train_dataloader(batch_size=1000, transform=prep)
     validation_data = DataHandler.get_validation_data(transform=prep, n_samples=3000)
 
     # train
-    trainer = Trainer(lr=lr, n_epochs=n_epochs, exp_name=exp_name)
+    trainer = Trainer(lr=train_config["lr"], n_epochs=train_config["n_epochs"], exp_name="")
     trainer.train(model, train_dataloader, validation_data, verbose_batch=True)
 
 
-def run_experiment_3conv(augmentations=True):
-    # set params
-    n_epochs = 50
-    lr_step = 40
-    lr = 1e-1  # 1e-3 1e-2 * 3
-    batch_size = 1000
-    exp_name = "Conv3_LR{:7.5f}_aug-{}".format(lr, augmentations)
-
-    # get model
-    model = Net3Conv().cuda()
-    prep = DataHandler.preprocess(augmentations=augmentations, padding_to_32=False)
-
-    # data
-    train_dataloader = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
-    validation_data = DataHandler.get_validation_data(transform=prep, n_samples=1000)
-
-    # train
-    trainer = Trainer(lr=lr, n_epochs=n_epochs, exp_name=exp_name, lr_step=lr_step)
-    trainer.train(model, train_dataloader, validation_data, verbose_batch=True)
-
-
-def measure_inference_time():
-    models = [Net3Conv(),
-              Net9Conv(),
-              get_efficientnet_pretrained_on_imagenet()]
-    models_paths = ["resources/model-Net3Conv_Feb24_1832_epochs-050_acc-0.907_params-0029K_t-007.6_exp-Conv9_LR0.10000_aug-False.pth",
-                    "resources/model-Net9Conv_Feb24_1902_epochs-050_acc-0.934_params-0154K_t-034.2_exp-Conv9_LR0.10000_aug-False.pth",
-                    "resources/model-EfficientNet_Feb23_1701_epochs-050_acc-0.935_params-4020K_t-093.0_exp-LR01_AdjsutLR40_dropout_025_05_augment005.pth"]
-    for i in range(3):
-        for model, model_p in zip(models, models_paths):
-            net = Trainer.load_model(model_p, model)
-            Benchmarker.get_inference_time(net.cuda())
+TRAIN_CONFIG = dict()
+TRAIN_CONFIG["model_name"] = "resnet-18"
+TRAIN_CONFIG["n_epochs"] = 16
+TRAIN_CONFIG["lr"] = 1e-1  # 1e-1 * 2
+TRAIN_CONFIG["augmentations"] = True
 
 
 if __name__ == '__main__':
-    # run_experiment_3conv()
-    # run_experiment_efficientnet()
-    measure_inference_time()
-
+    run_training(TRAIN_CONFIG)
     print("\n Done ..")
