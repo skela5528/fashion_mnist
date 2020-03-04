@@ -1,6 +1,7 @@
 import torch.nn as nn
 from efficientnet_pytorch import EfficientNet
 from torchvision.models.resnet import resnet18
+from torchvision.models.mobilenet import MobileNetV2
 
 
 class ConvBlock(nn.Module):
@@ -107,4 +108,10 @@ def get_efficientnet_pretrained_on_imagenet(model_name="efficientnet-b0", num_cl
 def get_resnet18(num_classes=10, in_channels=1):
     model = resnet18(pretrained=False, num_classes=num_classes)
     model.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    return model.cuda()
+
+
+def get_mobilenet_v2(num_classes=10, in_channels=1):
+    model = MobileNetV2(num_classes=num_classes)
+    model.features[0][0] = nn.Conv2d(in_channels, 32, kernel_size=3, stride=1, padding=1, bias=False)
     return model.cuda()

@@ -13,7 +13,7 @@ from torchvision import transforms
 from torchvision.datasets import FashionMNIST
 from torchsummary import summary
 
-from networks import Net3Conv, Net9Conv, get_efficientnet_pretrained_on_imagenet, get_resnet18
+from networks import Net3Conv, Net9Conv, get_efficientnet_pretrained_on_imagenet, get_resnet18, get_mobilenet_v2
 
 
 def time_format(time_in_seconds):
@@ -33,18 +33,23 @@ class DataHandler:
     N_WORKERS = 4
 
     @classmethod
-    def preprocess(cls, augmentations=False, padding_to_32=False):
+    def preprocess(cls, augmentations_level=False, padding_to_32=False):
         """Preprocess pipeline. Options: padding, norm by /255, rotate, translate, scale, horizontal flip."""
+        assert augmentations_level in [False, 1, 2, 3], \
+            "augmentations_level={} is not defined".format(augmentations_level)
         transforms_list = list()
         if padding_to_32:
             # min dimension supported by efficientnet is 32x32
             transforms_list.append(transforms.Pad(padding=2, padding_mode="edge"))
-        if augmentations:
+        if augmentations_level == 3:
             # transforms_list.append(transforms.RandomCrop(32 if padding_to_32 else 28))
             transforms_list.append(transforms.RandomAffine(degrees=0, translate=(.15, .15), scale=(.90, 1.10)))
+        elif augmentations_level == 2:
+            transforms_list.append(transforms.RandomAffine(degrees=0, translate=(.10, .10), scale=(.95, 1.05)))
+        elif augmentations_level == 1:
+            transforms_list.append(transforms.RandomAffine(degrees=0, translate=(.05, .05), scale=None))
+        if augmentations_level in [1, 2, 3]:
             transforms_list.append(transforms.RandomHorizontalFlip())
-            # inverse with p=.5
-            # transforms_list.append(transforms.Lambda(lambda x: 1 - x if int(time.time()) % 2 == 0 else x))
         transforms_list.append(transforms.ToTensor())
         return transforms.Compose(transforms_list)
 
@@ -108,8 +113,8 @@ class Benchmarker:
         model.eval()
 
         padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
-        prep_default = DataHandler.preprocess(augmentations=False, padding_to_32=padding_to_32)
-        prep_augment = DataHandler.preprocess(augmentations=True, padding_to_32=padding_to_32)
+        prep_default = DataHandler.preprocess(augmentations_level=False, padding_to_32=padding_to_32)
+        prep_augment = DataHandler.preprocess(augmentations_level=True, padding_to_32=padding_to_32)
         dataloaders_list = list()
         dataloaders_list.append(DataHandler.get_test_dataloader(transform=prep_default))
         dataloaders_list.append(DataHandler.get_test_dataloader(transform=prep_augment))
@@ -149,7 +154,7 @@ class Benchmarker:
         batch_size = 1000
         n_iters = 10
         padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
-        prep = DataHandler.preprocess(augmentations=False, padding_to_32=padding_to_32)
+        prep = DataHandler.preprocess(augmentations_level=False, padding_to_32=padding_to_32)
         data = DataHandler.get_train_dataloader(batch_size=batch_size, transform=prep)
         times_per_iter = []
         for iter_id, (x, _) in enumerate(data):
@@ -376,6 +381,8 @@ def get_model(model_name):
         model = get_efficientnet_pretrained_on_imagenet()
     elif model_name == "resnet-18":
         model = get_resnet18()
+    elif model_name == "mobilenet_v2":
+        model = get_mobilenet_v2()
     else:
         print("Model - {} is not supported! Exit!".format(model_name))
         exit(-1)
@@ -386,7 +393,7 @@ def run_training(train_config):
     # get model
     model = get_model(train_config["model_name"])
     padding_to_32 = True if model.__class__.__name__ == "EfficientNet" else False
-    prep = DataHandler.preprocess(augmentations=train_config["augmentations"], padding_to_32=padding_to_32)
+    prep = DataHandler.preprocess(augmentations_level=train_config["augmentations_level"], padding_to_32=padding_to_32)
 
     print(model)
     summary(model, (1, 28, 28))
@@ -396,15 +403,24 @@ def run_training(train_config):
     validation_data = DataHandler.get_validation_data(transform=prep, n_samples=3000)
 
     # train
-    trainer = Trainer(lr=train_config["lr"], n_epochs=train_config["n_epochs"], exp_name="")
+    trainer = Trainer(lr=train_config["lr"],
+                      n_epochs=train_config["n_epochs"],
+                      lr_step=train_config["train_step"],
+                      exp_name="")
     trainer.train(model, train_dataloader, validation_data, verbose_batch=True)
 
 
+def add_results_line(train_config):
+    # TODO complete
+    pass
+
+
 TRAIN_CONFIG = dict()
-TRAIN_CONFIG["model_name"] = "resnet-18"
+TRAIN_CONFIG["model_name"] = "mobilenet_v2"
 TRAIN_CONFIG["n_epochs"] = 16
 TRAIN_CONFIG["lr"] = 1e-1  # 1e-1 * 2
-TRAIN_CONFIG["augmentations"] = True
+TRAIN_CONFIG["lr_step"] = 40
+TRAIN_CONFIG["augmentations_level"] = 2
 
 
 if __name__ == '__main__':
